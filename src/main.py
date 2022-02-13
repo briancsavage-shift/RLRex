@@ -1,47 +1,48 @@
+import numpy as np
 import tensorflow as tf
 import tensorflow_datasets as tfds
 import tensorflow_recommenders as tfrs
+
 import utils
+import models
+
+SEED = 42
+BATCH_SIZE = 8192
+LEARNING_RATE = 0.1
 
 
 def main():
     logger = utils.setLogging()
+    tf.random.set_seed(SEED)
 
-    logger.debug("debug message")
-    logger.info("info message")
-    logger.warning("warning message")
-    logger.error("error message")
-    logger.critical("critical message")
-
-    # Load data on movie ratings.
     ratings = tfds.load("movielens/100k-ratings", split="train")
-    movies = tfds.load("movielens/100k-movies", split="train")
+    ratings = ratings.map(lambda r: {
+        "movie_title": r["movie_title"],
+        "user_id": r["user_id"],
+        "user_rating": r["user_rating"]
+    })
 
-    # Build flexible representation models.
-    user_model = tf.keras.Sequential([...])
-    movie_model = tf.keras.Sequential([...])
+    shuffled = ratings.shuffle(len(ratings),
+                               seed=SEED,
+                               reshuffle_each_iteration=False)
 
-    # Define your objectives.
-    task = tfrs.tasks.Retrieval(metrics=tfrs.metrics.FactorizedTopK(
-        movies.batch(128).map(movie_model)
+    tr_size, te_size = int(len(ratings) * 0.8), int(len(ratings) * 0.2)
+    train = shuffled.take(tr_size)
+    test = shuffled.skip(tr_size).take(te_size)
+
+    movie_titles = ratings.batch(len(ratings)).map(lambda x: x["movie_title"])
+    user_ids = ratings.batch(len(ratings)).map(lambda x: x["user_id"])
+
+    model = models.MovielensModel(movie_titles, user_ids)
+    model.compile(optimizer=tf.keras.optimizers.Adagrad(
+        learning_rate=LEARNING_RATE
     ))
 
-    # Create a retrieval model.
-    model = tf.MovielensModel(user_model, movie_model, task)
-    model.compile(optimizer=tf.keras.optimizers.Adagrad(0.5))
+    cached_train = train.shuffle(len(ratings)).batch(BATCH_SIZE).cache()
+    cached_test = test.batch(BATCH_SIZE // 2).cache()
 
-    # Train.
-    model.fit(ratings.batch(4096), epochs=3)
-
-    # Set up retrieval using trained representations.
-    index = tfrs.layers.ann.BruteForce(model.user_model)
-    index.index_from_dataset(
-        movies.batch(100).map(lambda title: (title, model.movie_model(title)))
-    )
-
-    # Get recommendations.
-    _, titles = index(np.array(["42"]))
-    print(f"Recommendations for user 42: {titles[0, :3]}")
+    model.fit(cached_train, epochs=3)
+    logger.debug(model.evaluate(cached_test, return_dict=True))
 
 
 if __name__ == "__main__":

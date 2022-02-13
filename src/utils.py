@@ -13,5 +13,4 @@ def setLogging():
     logging.config.fileConfig(fname='../configs/logging.conf')
     logger = logging.getLogger(__name__)
     coloredlogs.install(level='DEBUG', logger=logger)
-
     return logger
